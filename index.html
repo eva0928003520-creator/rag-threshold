@@ -1,0 +1,2873 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG拒答門檻</title>
+<style>
+  :root {
+    --bg: #F3F6EC;
+    --card: #FFFFFF;
+    --ink: #13212E;
+    --muted: #66756C;
+    --line: #DCE4CE;
+    --brick: #13212E;      /* 高於門檻：系統會回答（深藍） */
+    --olive: #5E8C2A;
+    --lime: #D6E88A;
+    --rust: #9A3E22;
+    --brick-dark: #0B1620;
+    --sand: #B5C2A2;       /* 低於門檻：系統拒答（灰綠） */
+    --rust-soft: #EEF4E2;
+    --ok: #4E7A22;
+    --warn: #9A3E22;
+    --serif: "Noto Serif TC", "Source Han Serif TC", "Songti TC", "PMingLiU", Georgia, serif;
+    --sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", "Heiti TC", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  body { min-height: 100vh; }
+
+  header { padding: 28px 32px 8px; max-width: 1480px; margin: 0 auto; }
+  .kicker { font-size: 12px; letter-spacing: .18em; color: var(--olive); font-weight: 700; text-transform: uppercase; }
+  h1 { font-family: var(--serif); font-size: 38px; line-height: 1.2; margin: 6px 0 10px; font-weight: 700; }
+  #conclusion { font-family: var(--serif); font-size: 18px; line-height: 1.65; color: #2F3D47; max-width: 980px; margin: 0; }
+  #conclusion b { color: var(--olive); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; padding: 18px 32px 32px; max-width: 1480px; margin: 0 auto; align-items: start; }
+  .card { background: var(--card); border-radius: 16px; box-shadow: 0 1px 2px rgba(19,33,46,.05), 0 8px 24px rgba(19,33,46,.07); border: 1px solid var(--line); }
+
+  /* 圖表區 */
+  .chart-card { padding: 18px 20px 14px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; justify-content: space-between; }
+  .tabs { display: inline-flex; background: #E4EDD2; border-radius: 999px; padding: 4px; }
+  .tabs button { border: 0; background: transparent; padding: 7px 16px; border-radius: 999px; font: inherit; font-size: 14px; color: var(--brick-dark); cursor: pointer; }
+  .tabs button.active { background: var(--brick); color: #fff; box-shadow: 0 1px 3px rgba(19,33,46,.3); }
+
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; font-size: 13px; color: var(--muted); }
+  .stat b { font-family: var(--serif); font-size: 19px; color: var(--ink); margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .stat.bad b { color: var(--warn); }
+  .stat.good b { color: var(--ok); }
+
+  .slider-row { display: flex; align-items: center; gap: 12px; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  .slider-row input[type=range] { flex: 1; accent-color: var(--brick); }
+  #thrValue { font-family: var(--serif); font-size: 20px; color: var(--rust); min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+  .btn { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; transition: background .15s, border-color .15s; }
+  .btn:hover { border-color: var(--olive); background: #F5F9EC; }
+  .btn.on { background: var(--brick); border-color: var(--brick); color: #fff; }
+
+  svg#chart { width: 100%; height: auto; display: block; margin-top: 4px; user-select: none; }
+  .axis text { font-size: 11px; fill: var(--muted); font-family: var(--sans); }
+  .axis line, .axis path { stroke: var(--line); }
+  .row-label { font-family: var(--serif); font-size: 15px; fill: var(--ink); font-weight: 700; }
+  .row-sub { font-size: 11px; fill: var(--muted); }
+  .row-bg { fill: #F2F6E8; }
+  .dot { transition: r .12s, stroke-width .12s, opacity .2s; }
+  .hit { fill: transparent; cursor: pointer; }
+  .thr-line { stroke: var(--rust); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .thr-handle { fill: var(--rust); cursor: ew-resize; }
+  .thr-label { font-family: var(--serif); font-size: 13px; fill: var(--rust); font-weight: 700; }
+  .side-label { font-size: 11px; fill: var(--muted); letter-spacing: .08em; }
+  .gray-band { fill: rgba(214,232,138,.45); }
+  .wrong-ring { fill: none; stroke: var(--ink); stroke-width: 1.4; stroke-dasharray: 2.5 2; pointer-events: none; }
+  .brush-rect { fill: rgba(94,140,42,.10); stroke: var(--olive); stroke-dasharray: 4 3; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .footnote { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+
+  /* 右側面板 */
+  aside.panel { position: sticky; top: 16px; height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+  .panel-tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .panel-tabs button { flex: 1; border: 0; background: transparent; padding: 13px 8px; font: inherit; font-size: 14px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .panel-tabs button.active { color: var(--olive); border-bottom-color: var(--olive); font-weight: 700; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 18px 20px 24px; }
+  .empty { color: var(--muted); font-size: 14px; line-height: 1.7; }
+  .pid { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pid .id { font-family: var(--serif); font-size: 22px; font-weight: 700; color: var(--olive); }
+  .pill { font-size: 11px; border-radius: 999px; padding: 2px 9px; border: 1px solid var(--line); color: var(--muted); background: #fff; }
+  .pill.lock { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .pill.real { border-color: #A9C47E; color: var(--ok); background: #F3F8E6; }
+  .pill.demo { border-color: #D8B3A2; color: var(--rust); }
+  .question { font-family: var(--serif); font-size: 19px; line-height: 1.55; margin: 10px 0 12px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .tag { font-size: 12px; padding: 3px 9px; border-radius: 6px; background: var(--rust-soft); color: var(--ink); }
+  .tag.dyn-ok { background: #E6F0D3; color: var(--ok); }
+  .tag.dyn-bad { background: #F4DED4; color: var(--warn); font-weight: 700; }
+  .tag.neutral { background: #EDF1E6; color: #4F5E56; }
+  h3 { font-family: var(--serif); font-size: 15px; margin: 18px 0 8px; color: var(--ink); }
+  .score { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+  .score.current { border-color: var(--olive); box-shadow: 0 0 0 2px rgba(94,140,42,.12); }
+  .score .top { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .score .val { font-family: var(--serif); font-size: 18px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .bar { position: relative; height: 8px; background: #EAF0DF; border-radius: 4px; margin: 8px 0 6px; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+  .bar .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--rust); }
+  .score .verdict { font-size: 12px; }
+  .top3 { list-style: none; padding: 0; margin: 0; counter-reset: t; }
+  .top3 li { border-left: 3px solid var(--line); padding: 6px 0 8px 12px; margin-bottom: 8px; font-size: 13px; line-height: 1.55; }
+  .top3 li.exp { border-left-color: var(--ok); }
+  .top3 .meta { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+  .top3 .txt { color: var(--ink); word-break: break-word; }
+  .list-head { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .brush-item { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; border: 1px solid transparent; }
+  .brush-item:hover, .brush-item.active { background: #F3F8E6; border-color: var(--line); }
+  .brush-item .bid { font-family: var(--serif); color: var(--olive); font-weight: 700; }
+  .brush-item .bq { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brush-item .bs { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; }
+    aside.panel { position: static; height: 560px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="kicker">補對了嗎？· RAG 檢索評估</div>
+  <h1>RAG拒答門檻</h1>
+  <p id="conclusion"></p>
+</header>
+
+<main>
+  <section class="card chart-card">
+    <div class="toolbar">
+      <div class="tabs" role="tablist">
+        <button data-metric="vec" class="active">向量相似度</button>
+      </div>
+      <div class="stats">
+        <div class="stat good" id="statA"></div>
+        <div class="stat good" id="statR"></div>
+        <div class="stat" id="statW"></div>
+      </div>
+    </div>
+
+    <div class="slider-row">
+      <span>門檻</span>
+      <input type="range" id="thr" min="0.4" max="0.8" step="0.001">
+      <span id="thrValue"></span>
+    </div>
+
+    <div class="buttons">
+      <button class="btn" id="btnGray">僅選灰色地帶</button>
+      <button class="btn" id="btnWrong">圈出判斷錯的題</button>
+      <button class="btn" id="btnBrush">框選模式</button>
+      <button class="btn" id="btnClear">清除選取</button>
+      <button class="btn" id="btnReset">門檻還原</button>
+    </div>
+
+    <svg id="chart" viewBox="0 0 860 470" aria-label="各題分數蜂群圖"></svg>
+
+    <div class="legend">
+      <span><i style="background:var(--brick)"></i>高於門檻：系統會回答</span>
+      <span><i style="background:var(--sand)"></i>低於門檻：系統拒答</span>
+      <span><i style="border:1.4px dashed var(--ink);background:transparent"></i>判斷錯（開啟「圈出判斷錯的題」）</span>
+    </div>
+    <div class="footnote" id="footnote"></div>
+  </section>
+
+  <aside class="card panel">
+    <div class="panel-tabs">
+      <button data-ptab="detail" class="active">詳細資料</button>
+      <button data-ptab="brush">框選清單 <span id="brushCount"></span></button>
+    </div>
+    <div class="panel-body" id="panelBody"></div>
+  </aside>
+</main>
+
+<script>
+/* =========================================================
+   資料：之後把真實資料貼進來，取代下面整個 DATA 陣列即可。
+   每筆格式：
+   { id, category, question, expected:"answer"|"refuse",
+     vecScore, tags:[...], source:"real"|"demo",
+     top3:[ "字串" 或 {source, section, score, text, expected} ] }
+   ========================================================= */
+const DATA = [
+ {
+  "id": "p01",
+  "category": "健康問題",
+  "question": "我吃 metformin，同時補充維生素 B12，這兩者有什麼關係？",
+  "expected": "answer",
+  "vecScore": 0.732,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "metformin-b12",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Metformin",
+    "score": 0.732,
+    "text": "Metformin, an antihyperglycemic agent used as first-line treatment for prediabet",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications",
+    "score": 0.641,
+    "text": "Vitamin B12 supplements may interact with medications, and some medications, inc",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "8.1 臨床重要副作用/不良反應",
+    "score": 0.634,
+    "text": "以metformin hydrochloride治療有可能會出現下列的不良反應。  出現頻率的歸類如下:  很常見(very common):≥ 1/10  常",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p02",
+  "category": "健康問題",
+  "question": "我長期吃氫離子幫浦抑制劑（esomeprazole），補充鎂有什麼要注意？",
+  "expected": "answer",
+  "vecScore": 0.717,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "ppi-magnesium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "警語及注意之事項 ( 依文獻記載 )",
+    "score": 0.717,
+    "text": "當任何警示性症狀出現時 ( 如體重無故地顯著減輕、反覆嘔吐、吞嚥困難、吐血或黑糞 ) 及懷疑 ( 或已存在 ) 胃潰瘍時，應先確認其非惡性腫瘤，因此 Esome",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Proton pump inhibitors",
+    "score": 0.713,
+    "text": "drug-safety-communication-low-magnesium-levels-can-be-associated-long-term-use-p",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Proton pump inhibitors",
+    "score": 0.704,
+    "text": "Prescription proton pump inhibitor (PPI) drugs, such as esomeprazole magnesium (",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p03",
+  "category": "健康問題",
+  "question": "我每天吃胃藥泮托拉唑（pantoprazole），有在補充維生素 B12，需要注意什麼？",
+  "expected": "answer",
+  "vecScore": 0.704,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "pantoprazole-b12",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "其他交互作用試驗",
+    "score": 0.704,
+    "text": "Pantoprazole主要受肝臟內之細胞色素P450酵素系統代謝。主要代謝途徑為CYP2C19去甲基化，其他代謝途徑包括CYP3A4氧化作用。與同樣透過這些途",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "5.1 警語/注意事項",
+    "score": 0.669,
+    "text": "<u>肝功能不全</u>  以pantoprazole治療期間應監測嚴重肝功能不全病人之肝臟酵素，尤其是長時間使用時。若肝臟酵素濃度增加，應終止治療(請參見3.",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Gastric acid inhibitors",
+    "score": 0.668,
+    "text": "Gastric acid inhibitors include proton pump inhibitors, such as omeprazole (Pril",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p04",
+  "category": "健康問題",
+  "question": "我常吃法莫替丁（famotidine）治胃食道逆流，吃 B12 有關係嗎？",
+  "expected": "answer",
+  "vecScore": 0.647,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "famotidine-b12",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "10.2 藥效藥理特性",
+    "score": 0.647,
+    "text": "本品成分Famotidine 為⼀Histamine H2 受體拮抗劑，可拮抗胃黏膜壁細胞之Histamine H2 受體 ⽽ 產 ⽣ 強 ⼒ 且持續的抑制胃酸",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Gastric acid inhibitors",
+    "score": 0.628,
+    "text": "Gastric acid inhibitors include proton pump inhibitors, such as omeprazole (Pril",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications",
+    "score": 0.584,
+    "text": "Vitamin B12 supplements may interact with medications, and some medications, inc",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p05",
+  "category": "健康問題",
+  "question": "我在吃雷貝拉唑（rabeprazole），醫生說我貧血要補鐵，這兩個一起吃可以嗎？",
+  "expected": "answer",
+  "vecScore": 0.645,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "rabeprazole-iron",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "5.2 藥動學性質 (依文獻記載)",
+    "score": 0.645,
+    "text": "吸收:本品是rabeprazole sodium的陽冷(抗胃酸)疑,原因是rabeprazole在酸中不穩定。因此rabeprazole的吸收只在錠劑離開胃部後",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "4.5 藥物交互作用(依文献記載)",
+    "score": 0.643,
+    "text": "Rabeprazole sodium 能產生完全以及長而持久的胃酸分泌抑制作用。本品與吸收受pH值影響之化合物可能產生交互作用。Rabeprazole sodi",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Proton pump inhibitors",
+    "score": 0.566,
+    "text": "Gastric acid plays an important role in the absorption of nonheme iron from the",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p06",
+  "category": "健康問題",
+  "question": "我吃降血壓的利尿劑吲達帕胺（indapamide），要不要補鎂？",
+  "expected": "answer",
+  "vecScore": 0.746,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "indapamide-magnesium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "*血中鎂離子濃度",
+    "score": 0.746,
+    "text": "Thiazide類利尿劑，及與Thiazide類似的利尿劑包括indapamide已被證明會增加鎂離子由尿液排除，可能導致低血鎂症（請參考章節7及8）。",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "10.1 作用機轉",
+    "score": 0.725,
+    "text": "Indapamide是含Indol環之sulphonamide衍生物，藥理作用與thiazide 類利尿劑有  關，Indapamide抑制腎皮質稀釋段對鈉離子",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Diuretics",
+    "score": 0.629,
+    "text": "Chronic treatment with loop diuretics, such as furosemide (Lasix) and bumetanide",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p07",
+  "category": "健康問題",
+  "question": "我吃氫氯噻嗪（hydrochlorothiazide）降血壓，補充鉀有什麼要注意？",
+  "expected": "answer",
+  "vecScore": 0.658,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "hydrochlorothiazide-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.658,
+    "text": "1. 抗凝血劑與本藥共用後，會減低抗凝血作用，劑量應加以調節。  2. 其他抗高血壓劑特別是Diazoxide或外科麻醉前誘導劑、麻醉劑、骨骼肌鬆弛劑等與本藥併",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Loop and thiazide diuretics",
+    "score": 0.646,
+    "text": "Treatment with loop diuretics, such as furosemide (Lasix) and bumetanide (Bumex)",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "(前言)",
+    "score": 0.621,
+    "text": "(5) 血清蛋白結合碘(Protein-Bound lodine)含量（或許會降低）。  (6) 血或尿中葡萄糖量（通常只對葡萄糖無耐受性因素之病人）。  6.",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p08",
+  "category": "健康問題",
+  "question": "吃利尿劑吲達帕胺（indapamide）的人，鋅會不會不夠？",
+  "expected": "answer",
+  "vecScore": 0.686,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "indapamide-zinc",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "10.1 作用機轉",
+    "score": 0.686,
+    "text": "Indapamide是含Indol環之sulphonamide衍生物，藥理作用與thiazide 類利尿劑有  關，Indapamide抑制腎皮質稀釋段對鈉離子",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Diuretics",
+    "score": 0.66,
+    "text": "Thiazide diuretics, such as chlorthalidone (e.g., Hygroton, Thalitone) and hydro",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "12 臨床試驗資料",
+    "score": 0.652,
+    "text": "臨床試驗第II,III期中，Indapamide單獨使用時，有降血壓效果，並且可維持24小時，在此劑量下只有輕微的利尿效果，  Indapamide的降血壓效果",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p09",
+  "category": "健康問題",
+  "question": "我吃氫氯噻嗪（hydrochlorothiazide），又吃高劑量維生素 D，會有問題嗎？",
+  "expected": "answer",
+  "vecScore": 0.689,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "hydrochlorothiazide-vitamin-d",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Thiazide diuretics",
+    "score": 0.689,
+    "text": "Thiazide diuretics (e.g., Hygroton, Lozol, and Microzide) decrease urinary calci",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications",
+    "score": 0.64,
+    "text": "Vitamin D supplements may interact with medications, and some medications may af",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "(前言)",
+    "score": 0.62,
+    "text": "| 1 | 性狀 | | --- | --- | |  | 1.1 有效成分及含量 | |  | 每錠含Dihydrochlorothia",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p10",
+  "category": "健康問題",
+  "question": "我吃替米沙坦（telmisartan）控制血壓，可以吃鉀補充劑嗎？",
+  "expected": "answer",
+  "vecScore": 0.683,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "telmisartan-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "兒童病人",
+    "score": 0.683,
+    "text": "尚未針對18歲以下病人進行telmisartan的藥物動力學研究。  藥物交互作用研究  Telmisartan  Ramipril與Ramiprilat:健康",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "風險摘要",
+    "score": 0.668,
+    "text": "<table><tr><td colspan=\"2\">目前尚無關於telmisartan是否存在人乳中的資訊,因此也亦尚無其對哺乳嬰兒之影響、或對產奶量之影響的",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Angiotensin converting enzyme inhibitors and angiotensin receptor blockers",
+    "score": 0.645,
+    "text": "ACE inhibitors, such as benazepril (Lotensin), and angiotensin receptor blockers",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p11",
+  "category": "健康問題",
+  "question": "我吃賴諾普利（lisinopril），同時想補充鉀，安全嗎？",
+  "expected": "answer",
+  "vecScore": 0.674,
+  "tags": [
+   "可回答",
+   "開發題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "lisinopril-potassium",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Angiotensin converting enzyme inhibitors and angiotensin receptor blockers",
+    "score": 0.674,
+    "text": "ACE inhibitors, such as benazepril (Lotensin), and angiotensin receptor blockers",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "注意事項:",
+    "score": 0.667,
+    "text": "**7.妊娠:對於懷孕婦女之研究仍末有明確之報告。然曾有報告指出，懷孕婦女服用 ACE Inhibitor 會引起胎兒和新生兒之罹病率和死亡率，故不建議孕婦服用",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "(前言)",
+    "score": 0.662,
+    "text": "**綱號:C61**  **本藥主成分 Lisinopril 是一種合成之胜肽類衍生物，為血管收縮素轉化酶抑制劑(ACE Inhibitor)，能抑制血管收縮素",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p12",
+  "category": "健康問題",
+  "question": "我吃蘭索拉唑（lansoprazole）好幾年了，需要擔心維生素 B12 嗎？",
+  "expected": "answer",
+  "vecScore": 0.699,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-lansoprazole-b12",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "5.1.6 氰鈷胺(維生素B12)缺乏症",
+    "score": 0.699,
+    "text": "長期每日以任何制酸藥物治療（例如，超過3年以上）可能導致胃酸減少或缺乏而引起氰鈷胺素(維生素B12)的吸收障礙。文獻中曾報導因制酸劑治療而產生氰鈷胺素缺乏的罕見",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "12 至 17 歲",
+    "score": 0.671,
+    "text": "<table><tbody><tr><td>介入處置</td><td>在評估CgA濃度之前至少14天暫時停止lansoprazole治療，如果初始CgA濃度偏高",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Gastric acid inhibitors",
+    "score": 0.667,
+    "text": "Gastric acid inhibitors include proton pump inhibitors, such as omeprazole (Pril",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p13",
+  "category": "健康問題",
+  "question": "糖尿病吃二甲雙胍（metformin），仿單有提到維生素 B12 嗎？",
+  "expected": "answer",
+  "vecScore": 0.729,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-metformin-b12-label",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Metformin",
+    "score": 0.729,
+    "text": "Metformin, an antihyperglycemic agent used as first-line treatment for prediabet",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications",
+    "score": 0.636,
+    "text": "Vitamin B12 supplements may interact with medications, and some medications, inc",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "8.1 臨床重要副作用/不良反應",
+    "score": 0.636,
+    "text": "以metformin hydrochloride治療有可能會出現下列的不良反應。  出現頻率的歸類如下:  很常見(very common):≥ 1/10  常",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p14",
+  "category": "健康問題",
+  "question": "吃氫氯噻嗪（hydrochlorothiazide），鎂會不會流失？",
+  "expected": "answer",
+  "vecScore": 0.679,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-hydrochlorothiazide-magnesium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.679,
+    "text": "1. 抗凝血劑與本藥共用後，會減低抗凝血作用，劑量應加以調節。  2. 其他抗高血壓劑特別是Diazoxide或外科麻醉前誘導劑、麻醉劑、骨骼肌鬆弛劑等與本藥併",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Diuretics",
+    "score": 0.658,
+    "text": "Chronic treatment with loop diuretics, such as furosemide (Lasix) and bumetanide",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "(前言)",
+    "score": 0.622,
+    "text": "| 1 | 性狀 | | --- | --- | |  | 1.1 有效成分及含量 | |  | 每錠含Dihydrochlorothia",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p15",
+  "category": "健康問題",
+  "question": "我吃吲達帕胺（indapamide），每天也吃鈣片，要注意什麼？",
+  "expected": "answer",
+  "vecScore": 0.711,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落未進前 8"
+  ],
+  "source": "real",
+  "caseId": "holdout-indapamide-calcium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "10.1 作用機轉",
+    "score": 0.711,
+    "text": "Indapamide是含Indol環之sulphonamide衍生物，藥理作用與thiazide 類利尿劑有  關，Indapamide抑制腎皮質稀釋段對鈉離子",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "12 臨床試驗資料",
+    "score": 0.666,
+    "text": "臨床試驗第II,III期中，Indapamide單獨使用時，有降血壓效果，並且可維持24小時，在此劑量下只有輕微的利尿效果，  Indapamide的降血壓效果",
+    "expected": false
+   },
+   {
+    "source": "dris_tw",
+    "section": "本文中與藥物相關的敘述（供藥物交互作用模組建表參考）",
+    "score": 0.557,
+    "text": "本文散見以下藥物敘述，可作為交互作用規則的**台灣官方出處**：  | 營養素 | 藥物 | 敘述要點 | 位置 | |---|---|---\\",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p16",
+  "category": "健康問題",
+  "question": "我吃厄貝沙坦（irbesartan），可以用含鉀的低鈉鹽嗎？",
+  "expected": "answer",
+  "vecScore": 0.738,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-irbesartan-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "急性腎衰竭）】之發生率高。",
+    "score": 0.738,
+    "text": "**irbesarten併用留鉀利尿劑、補鉀劑、含鉀代鹽、或其它可能提高血鉀（Kalaemia）藥物，可能會使鉀離子血清濃度上升，嚴重時，需密切監測鉀離子血清濃",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.696,
+    "text": "<strong><u>利尿劑與其他降血壓劑</u></strong>**:其他降血壓劑可能會增加irbesartan 的降血壓效果。然而，Aprovel曾經安全",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Angiotensin converting enzyme inhibitors and angiotensin receptor blockers",
+    "score": 0.645,
+    "text": "ACE inhibitors, such as benazepril (Lotensin), and angiotensin receptor blockers",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p17",
+  "category": "健康問題",
+  "question": "吃洛沙坦（losartan）的人可以補充鉀嗎？",
+  "expected": "answer",
+  "vecScore": 0.697,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-losartan-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.697,
+    "text": "在臨床之藥物動力學試驗中，尚無具臨床意義之證據可確認losartan與hydrochlorothiazide, digoxin, warfarin, cimet",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Angiotensin converting enzyme inhibitors and angiotensin receptor blockers",
+    "score": 0.673,
+    "text": "ACE inhibitors, such as benazepril (Lotensin), and angiotensin receptor blockers",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "10.1 作用機轉",
+    "score": 0.66,
+    "text": "COZAAR® (losartan potassium)是血管收縮素II (angiotensin II)接受體 $( \\mathsf { A T } _ {",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p18",
+  "category": "健康問題",
+  "question": "長期吃奧美拉唑（omeprazole），要不要注意鎂？",
+  "expected": "answer",
+  "vecScore": 0.726,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落第 4 名"
+  ],
+  "source": "real",
+  "caseId": "holdout-omeprazole-magnesium",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Proton pump inhibitors",
+    "score": 0.726,
+    "text": "drug-safety-communication-low-magnesium-levels-can-be-associated-long-term-use-p",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Proton pump inhibitors",
+    "score": 0.69,
+    "text": "Prescription proton pump inhibitor (PPI) drugs, such as esomeprazole magnesium (",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "警語及注意之事項 ( 依文獻記載 )",
+    "score": 0.666,
+    "text": "當任何警示性症狀出現時 ( 如體重無故地顯著減輕、反覆嘔吐、吞嚥困難、吐血或黑糞 ) 及懷疑 ( 或已存在 ) 胃潰瘍時，應先確認其非惡性腫瘤，因此 Esome",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p19",
+  "category": "健康問題",
+  "question": "我在吃降膽固醇的阿托伐他汀（atorvastatin），還能吃紅麴嗎？",
+  "expected": "answer",
+  "vecScore": 0.71,
+  "tags": [
+   "可回答",
+   "保留題",
+   "預期段落未進前 8"
+  ],
+  "source": "real",
+  "caseId": "holdout-atorvastatin-red-yeast-rice",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "7.2 可能會降低 atorvastatin 暴露量的藥品交互作用",
+    "score": 0.71,
+    "text": "表 3 列出可能會降低 atorvastatin 暴露量的藥品交互作用，以及如何預防或處置它們的說明。  表 3:可能會降低 atorvastatin 暴露量的",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.688,
+    "text": "<details> <summary>seal</summary>  1 衛 盟 管 </details>  <table><tbody><tr><td>範例:",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.681,
+    "text": "7.1 使用 atorvastatin 時可能導致肌肉病變和橫紋肌溶解症風險增加之藥品交互作用Atorvastatin 是 CYP3A4 和運輸蛋白（如 OAT",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p20",
+  "category": "健康問題",
+  "question": "我在吃庫魯化控制血糖，綜合維他命裡有菸鹼酸，會有影響嗎？",
+  "expected": "answer",
+  "vecScore": 0.658,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "metformin-niacin",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "藥品交互作用",
+    "score": 0.658,
+    "text": "Metformin與特定藥品併用時可能增加乳酸中毒的風險，例如併用會降低腎功能、導致顯著的血液動力學變化、干擾酸鹼平衡或增加metformin堆積的藥品。因此，",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Antidiabetes medications",
+    "score": 0.637,
+    "text": "Large doses of nicotinic acid can raise blood glucose levels by causing or aggra",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "2 適應症",
+    "score": 0.628,
+    "text": "糖尿病。  說明:  作為飲食治療失效的輔助治療。Glucophage 500mg為biguanide類的口服降血糖藥物，用於非胰島素依賴型(或第二類型或成人型",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p21",
+  "category": "健康問題",
+  "question": "我在吃立普妥降膽固醇，又補充高劑量維生素 D，可以嗎？",
+  "expected": "answer",
+  "vecScore": 0.738,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "atorvastatin-vitamin-d",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Statins",
+    "score": 0.738,
+    "text": "903-5. [ [PubMed abstract](https://pubmed.ncbi.nlm.nih.gov/17398180/)]\\ \\ 173\\",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Statins",
+    "score": 0.72,
+    "text": "Statin medications reduce cholesterol synthesis. Because endogenous vitamin D is",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.681,
+    "text": "7.1 使用 atorvastatin 時可能導致肌肉病變和橫紋肌溶解症風險增加之藥品交互作用Atorvastatin 是 CYP3A4 和運輸蛋白（如 OAT",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p22",
+  "category": "健康問題",
+  "question": "吃冠脂妥的人需要額外補維生素 D 嗎？",
+  "expected": "answer",
+  "vecScore": 0.721,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "rosuvastatin-vitamin-d",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Statins",
+    "score": 0.721,
+    "text": "903-5. [ [PubMed abstract](https://pubmed.ncbi.nlm.nih.gov/17398180/)]\\ \\ 173\\",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Statins",
+    "score": 0.683,
+    "text": "Statin medications reduce cholesterol synthesis. Because endogenous vitamin D is",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "表8、合併投予之藥物對Rosuvastatin之全身暴露量的效果",
+    "score": 0.679,
+    "text": "<table><tbody><tr><td>合併投予之藥物與給藥方式</td><td colspan=\"3\">Rosuvastatin</td></tr><tr",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p23",
+  "category": "健康問題",
+  "question": "I take simvastatin. Is it OK to take vitamin C supplements?",
+  "expected": "answer",
+  "vecScore": 0.708,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "simvastatin-vitamin-c",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > 3-Hydroxy-3-methylglutaryl coenzyme A reductase inhibitors (statins)",
+    "score": 0.708,
+    "text": "Vitamin C, in combination with other antioxidants, may attenuate the increase in",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > 3-Hydroxy-3-methylglutaryl coenzyme A reductase inhibitors (statins)",
+    "score": 0.707,
+    "text": "althProfessional/#en54) 54\\. [Natural Medicines Comprehensive Database](http://w",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "與其他藥品的交互作用",
+    "score": 0.676,
+    "text": "其 他 fibrates : Gemfibrozil( 參 見 4. 禁 忌 ) 和 其 他 fibrates 會 增 加 肌 病 發 生 的 風 險(feno",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p24",
+  "category": "健康問題",
+  "question": "我吃辛伐他汀（simvastatin），想補充維生素 E，有什麼要注意？",
+  "expected": "answer",
+  "vecScore": 0.666,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "simvastatin-vitamin-e",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "與其他藥品的交互作用",
+    "score": 0.666,
+    "text": "其 他 fibrates : Gemfibrozil( 參 見 4. 禁 忌 ) 和 其 他 fibrates 會 增 加 肌 病 發 生 的 風 險(feno",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Simvastatin and niacin",
+    "score": 0.664,
+    "text": "Some people take vitamin E supplements with other antioxidants, such as vitamin",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "合併降血脂療法",
+    "score": 0.662,
+    "text": "Simvastatin 單獨使用或與膽酸隔離劑 (bile acid sequestrants) 併用都有效 。Simvastatin若與fibrates、fe",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p25",
+  "category": "健康問題",
+  "question": "我吃降血壓的利尿劑，鋅會不會流失？",
+  "expected": "answer",
+  "vecScore": 0.712,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "hydrochlorothiazide-zinc",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Diuretics",
+    "score": 0.712,
+    "text": "Thiazide diuretics, such as chlorthalidone (e.g., Hygroton, Thalitone) and hydro",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.624,
+    "text": "1. 抗凝血劑與本藥共用後，會減低抗凝血作用，劑量應加以調節。  2. 其他抗高血壓劑特別是Diazoxide或外科麻醉前誘導劑、麻醉劑、骨骼肌鬆弛劑等與本藥併",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications",
+    "score": 0.605,
+    "text": "Zinc may interact with certain medications, such as quinolone antibiotics, tetra",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p26",
+  "category": "健康問題",
+  "question": "我吃吲達帕胺（indapamide），需要補鉀嗎？",
+  "expected": "answer",
+  "vecScore": 0.725,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 3 名"
+  ],
+  "source": "real",
+  "caseId": "indapamide-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "10.1 作用機轉",
+    "score": 0.725,
+    "text": "Indapamide是含Indol環之sulphonamide衍生物，藥理作用與thiazide 類利尿劑有  關，Indapamide抑制腎皮質稀釋段對鈉離子",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "12 臨床試驗資料",
+    "score": 0.674,
+    "text": "臨床試驗第II,III期中，Indapamide單獨使用時，有降血壓效果，並且可維持24小時，在此劑量下只有輕微的利尿效果，  Indapamide的降血壓效果",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Loop and thiazide diuretics",
+    "score": 0.609,
+    "text": "Treatment with loop diuretics, such as furosemide (Lasix) and bumetanide (Bumex)",
+    "expected": true
+   }
+  ]
+ },
+ {
+  "id": "p27",
+  "category": "健康問題",
+  "question": "Does hydrochlorothiazide affect magnesium levels?",
+  "expected": "answer",
+  "vecScore": 0.683,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "hydrochlorothiazide-magnesium-nih",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "7 交互作用",
+    "score": 0.683,
+    "text": "1. 抗凝血劑與本藥共用後，會減低抗凝血作用，劑量應加以調節。  2. 其他抗高血壓劑特別是Diazoxide或外科麻醉前誘導劑、麻醉劑、骨骼肌鬆弛劑等與本藥併",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Diuretics",
+    "score": 0.658,
+    "text": "Chronic treatment with loop diuretics, such as furosemide (Lasix) and bumetanide",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "(前言)",
+    "score": 0.622,
+    "text": "| 1 | 性狀 | | --- | --- | |  | 1.1 有效成分及含量 | |  | 每錠含Dihydrochlorothia",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p28",
+  "category": "健康問題",
+  "question": "我吃樂酸克治胃食道逆流好幾年了，要擔心維生素 B12 嗎？",
+  "expected": "answer",
+  "vecScore": 0.676,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "omeprazole-b12",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Gastric acid inhibitors",
+    "score": 0.676,
+    "text": "Gastric acid inhibitors include proton pump inhibitors, such as omeprazole (Pril",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "警語及注意之事項 ( 依文獻記載 )",
+    "score": 0.636,
+    "text": "當任何警示性症狀出現時 ( 如體重無故地顯著減輕、反覆嘔吐、吞嚥困難、吐血或黑糞 ) 及懷疑 ( 或已存在 ) 胃潰瘍時，應先確認其非惡性腫瘤，因此 Esome",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "與其他藥物之交互作用及其他形式之交互作 ( 依文獻記載 )",
+    "score": 0.633,
+    "text": "僅針對成人完成交物作用試驗研究  <u>Esomeprazole 對其他藥物之藥動學影響</u>吸收會受胃液pH值影響的藥品  以 esomeprazole 和",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p29",
+  "category": "健康問題",
+  "question": "Can nizatidine cause vitamin B12 deficiency?",
+  "expected": "answer",
+  "vecScore": 0.622,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 1 名"
+  ],
+  "source": "real",
+  "caseId": "nizatidine-b12",
+  "top3": [
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Gastric acid inhibitors",
+    "score": 0.622,
+    "text": "Gastric acid inhibitors include proton pump inhibitors, such as omeprazole (Pril",
+    "expected": true
+   },
+   {
+    "source": "nih_ods",
+    "section": "Introduction",
+    "score": 0.579,
+    "text": "Vitamin B12 is a water-soluble vitamin that is naturally present in some foods,",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "1.1 有效成分及含量",
+    "score": 0.567,
+    "text": "Nizatidine 75 mg  1.2 其他成分(賦形劑)  Pregelatinized starch, maize starch, dimethicon",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p30",
+  "category": "健康問題",
+  "question": "我有糖尿病在吃降血糖藥，可以吃葡萄糖胺顧關節嗎？",
+  "expected": "answer",
+  "vecScore": 0.682,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落未進前 8"
+  ],
+  "source": "real",
+  "caseId": "metformin-glucosamine",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "2 適應症",
+    "score": 0.682,
+    "text": "糖尿病。  說明:  作為飲食治療失效的輔助治療。Glucophage 500mg為biguanide類的口服降血糖藥物，用於非胰島素依賴型(或第二類型或成人型",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "5.3 操作機械能力",
+    "score": 0.648,
+    "text": "以Metformin單一療法不會造成血糖過低，因此，不會影響到駕車與操作機器的能力。但，當metformin與其他降血糖藥物(sulfonylurea、insu",
+    "expected": false
+   },
+   {
+    "source": "tfda_label",
+    "section": "藥品交互作用",
+    "score": 0.641,
+    "text": "Metformin與特定藥品併用時可能增加乳酸中毒的風險，例如併用會降低腎功能、導致顯著的血液動力學變化、干擾酸鹼平衡或增加metformin堆積的藥品。因此，",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p31",
+  "category": "健康問題",
+  "question": "我吃纈沙坦（valsartan）降血壓，可以用含鉀的低鈉鹽嗎？",
+  "expected": "answer",
+  "vecScore": 0.646,
+  "tags": [
+   "可回答",
+   "中立題",
+   "預期段落第 2 名"
+  ],
+  "source": "real",
+  "caseId": "valsartan-potassium",
+  "top3": [
+   {
+    "source": "tfda_label",
+    "section": "1.1 有效成分及含量",
+    "score": 0.646,
+    "text": "主 成 分 : (S)-N-valeryl-N-{[2'-(1H-tetrazol-5-yl)biphenyl-4-yl]methyl}-valine (INN",
+    "expected": false
+   },
+   {
+    "source": "nih_ods",
+    "section": "Interactions with Medications > Angiotensin converting enzyme inhibitors and angiotensin receptor blockers",
+    "score": 0.637,
+    "text": "ACE inhibitors, such as benazepril (Lotensin), and angiotensin receptor blockers",
+    "expected": true
+   },
+   {
+    "source": "tfda_label",
+    "section": "5.1.7 雙重阻斷腎素─血管昇壓素─醛固酮系統 (renin-angiotensinaldosterone, RAAS)",
+    "score": 0.633,
+    "text": "有證據顯示，合併使用ACEIs、ARBs或含aliskiren成分藥品會增加低血壓、高鉀血症及腎功能下降 (包括急性腎衰竭) 之風險，故不建議合併使用ACEIs",
+    "expected": false
+   }
+  ]
+ },
+ {
+  "id": "p32",
+  "category": "健康問題",
+  "question": "我吃 warfarin，可以吃維生素 K 嗎？",
+  "expected": "answer",
+  "vecScore": 0.682,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p33",
+  "category": "健康問題",
+  "question": "長期吃類固醇需要補鈣嗎？",
+  "expected": "answer",
+  "vecScore": 0.64,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p34",
+  "category": "健康問題",
+  "question": "吃甲狀腺素的人，鈣片要隔多久吃？",
+  "expected": "answer",
+  "vecScore": 0.659,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p35",
+  "category": "健康問題",
+  "question": "我在吃 levodopa，可以吃鐵劑嗎？",
+  "expected": "answer",
+  "vecScore": 0.689,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p36",
+  "category": "健康問題",
+  "question": "吃抗凝血藥可以吃魚油嗎？",
+  "expected": "answer",
+  "vecScore": 0.71,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p37",
+  "category": "健康問題",
+  "question": "我吃 digoxin，鎂會有影響嗎？",
+  "expected": "answer",
+  "vecScore": 0.672,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p38",
+  "category": "健康問題",
+  "question": "吃 furosemide 需要補鉀嗎？",
+  "expected": "answer",
+  "vecScore": 0.725,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p39",
+  "category": "健康問題",
+  "question": "吃四環黴素時可以喝牛奶配鈣片嗎？",
+  "expected": "answer",
+  "vecScore": 0.708,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p40",
+  "category": "健康問題",
+  "question": "吃 isoniazid 需要補維生素 B6 嗎？",
+  "expected": "answer",
+  "vecScore": 0.748,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p41",
+  "category": "健康問題",
+  "question": "長期吃制酸劑會缺鐵嗎？",
+  "expected": "answer",
+  "vecScore": 0.67,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p42",
+  "category": "健康問題",
+  "question": "吃 spironolactone 可以吃鉀補充劑嗎？",
+  "expected": "answer",
+  "vecScore": 0.648,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p43",
+  "category": "健康問題",
+  "question": "吃 methotrexate 要補葉酸嗎？",
+  "expected": "answer",
+  "vecScore": 0.733,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p44",
+  "category": "健康問題",
+  "question": "吃 carbamazepine 會影響維生素 D 嗎？",
+  "expected": "answer",
+  "vecScore": 0.697,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p45",
+  "category": "健康問題",
+  "question": "我吃 phenytoin，葉酸要注意什麼？",
+  "expected": "answer",
+  "vecScore": 0.721,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p46",
+  "category": "健康問題",
+  "question": "吃 orlistat 會讓脂溶性維生素吸收變差嗎？",
+  "expected": "answer",
+  "vecScore": 0.708,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p47",
+  "category": "健康問題",
+  "question": "吃雙磷酸鹽類骨鬆藥，鈣片怎麼吃？",
+  "expected": "answer",
+  "vecScore": 0.674,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p48",
+  "category": "健康問題",
+  "question": "吃 ciprofloxacin 可以同時吃鋅嗎？",
+  "expected": "answer",
+  "vecScore": 0.711,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p49",
+  "category": "健康問題",
+  "question": "吃 amlodipine 可以吃葡萄柚萃取物嗎？",
+  "expected": "answer",
+  "vecScore": 0.693,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p50",
+  "category": "健康問題",
+  "question": "吃 clopidogrel 可以吃維生素 E 嗎？",
+  "expected": "answer",
+  "vecScore": 0.758,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p51",
+  "category": "健康問題",
+  "question": "吃 lithium 要注意鈉的攝取嗎？",
+  "expected": "answer",
+  "vecScore": 0.72,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p52",
+  "category": "健康問題",
+  "question": "吃 allopurinol 可以吃維生素 C 嗎？",
+  "expected": "answer",
+  "vecScore": 0.725,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p53",
+  "category": "健康問題",
+  "question": "吃秋水仙素會影響 B12 嗎？",
+  "expected": "answer",
+  "vecScore": 0.764,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p54",
+  "category": "健康問題",
+  "question": "吃 pravastatin 可以吃紅麴嗎？",
+  "expected": "answer",
+  "vecScore": 0.67,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p55",
+  "category": "健康問題",
+  "question": "吃 glipizide 可以吃鉻補充劑嗎？",
+  "expected": "answer",
+  "vecScore": 0.721,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p56",
+  "category": "健康問題",
+  "question": "吃 tamoxifen 可以吃大豆異黃酮嗎？",
+  "expected": "answer",
+  "vecScore": 0.693,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p57",
+  "category": "健康問題",
+  "question": "吃 sulfasalazine 要補葉酸嗎？",
+  "expected": "answer",
+  "vecScore": 0.648,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p58",
+  "category": "健康問題",
+  "question": "吃 cholestyramine 會影響維生素吸收嗎？",
+  "expected": "answer",
+  "vecScore": 0.734,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p59",
+  "category": "健康問題",
+  "question": "吃 prednisolone 要補維生素 D 嗎？",
+  "expected": "answer",
+  "vecScore": 0.665,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p60",
+  "category": "健康問題",
+  "question": "吃 enalapril 可以用低鈉鹽嗎？",
+  "expected": "answer",
+  "vecScore": 0.748,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p61",
+  "category": "健康問題",
+  "question": "吃 bumetanide 鎂會流失嗎？",
+  "expected": "answer",
+  "vecScore": 0.692,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p62",
+  "category": "健康問題",
+  "question": "吃 ranitidine 會缺 B12 嗎？",
+  "expected": "answer",
+  "vecScore": 0.749,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p63",
+  "category": "健康問題",
+  "question": "吃 esomeprazole 會缺鐵嗎？",
+  "expected": "answer",
+  "vecScore": 0.747,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p64",
+  "category": "健康問題",
+  "question": "吃 empagliflozin 要注意什麼營養素？",
+  "expected": "answer",
+  "vecScore": 0.687,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p65",
+  "category": "健康問題",
+  "question": "吃 metoprolol 可以吃 Q10 嗎？",
+  "expected": "answer",
+  "vecScore": 0.75,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p66",
+  "category": "健康問題",
+  "question": "吃 aspirin 可以吃銀杏嗎？",
+  "expected": "answer",
+  "vecScore": 0.652,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p67",
+  "category": "健康問題",
+  "question": "吃 sitagliptin 可以吃葡萄糖胺嗎？",
+  "expected": "answer",
+  "vecScore": 0.663,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p68",
+  "category": "健康問題",
+  "question": "吃 candesartan 可以吃鉀片嗎？",
+  "expected": "answer",
+  "vecScore": 0.697,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p69",
+  "category": "健康問題",
+  "question": "吃 torsemide 要補鎂嗎？",
+  "expected": "answer",
+  "vecScore": 0.667,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p70",
+  "category": "健康問題",
+  "question": "吃 dabigatran 可以吃薑黃嗎？",
+  "expected": "answer",
+  "vecScore": 0.688,
+  "tags": [
+   "可回答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Interactions with Medications｜與該藥的交互作用段落",
+   "（示意）TFDA 仿單｜交互作用｜藥品仿單相關章節",
+   "（示意）NIH ODS｜Introduction｜營養素概述"
+  ]
+ },
+ {
+  "id": "p71",
+  "category": "個人/即時",
+  "question": "我上週抽血的檢查報告數值是多少？",
+  "expected": "refuse",
+  "vecScore": 0.636,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p72",
+  "category": "個人/即時",
+  "question": "我的鉀離子數值正常嗎？",
+  "expected": "refuse",
+  "vecScore": 0.628,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p73",
+  "category": "個人/即時",
+  "question": "今天藥局有沒有賣鎂錠？",
+  "expected": "refuse",
+  "vecScore": 0.611,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p74",
+  "category": "個人/即時",
+  "question": "我昨天吃的那顆藥叫什麼名字？",
+  "expected": "refuse",
+  "vecScore": 0.603,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p75",
+  "category": "個人/即時",
+  "question": "我的醫生明天有看診嗎？",
+  "expected": "refuse",
+  "vecScore": 0.571,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p76",
+  "category": "個人/即時",
+  "question": "健保卡裡我的用藥紀錄可以幫我查嗎？",
+  "expected": "refuse",
+  "vecScore": 0.592,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p77",
+  "category": "個人/即時",
+  "question": "我家附近哪間診所可以驗維生素 D？",
+  "expected": "refuse",
+  "vecScore": 0.558,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p78",
+  "category": "個人/即時",
+  "question": "我現在的血壓幾多？",
+  "expected": "refuse",
+  "vecScore": 0.583,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p79",
+  "category": "個人/即時",
+  "question": "這個月的魚油特價到什麼時候？",
+  "expected": "refuse",
+  "vecScore": 0.544,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p80",
+  "category": "個人/即時",
+  "question": "我媽的藥我可以拿來吃嗎？",
+  "expected": "refuse",
+  "vecScore": 0.619,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p81",
+  "category": "個人/即時",
+  "question": "我上次問你的問題答案是什麼？",
+  "expected": "refuse",
+  "vecScore": 0.532,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）NIH ODS｜Introduction｜相似度高但無法回答個人資料",
+   "（示意）TFDA 仿單｜用法用量｜一般性說明",
+   "（示意）DRIs｜分層方式｜參考值總表"
+  ]
+ },
+ {
+  "id": "p82",
+  "category": "無關健康",
+  "question": "今天台北會下雨嗎？",
+  "expected": "refuse",
+  "vecScore": 0.501,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p83",
+  "category": "無關健康",
+  "question": "推薦一部好看的電影",
+  "expected": "refuse",
+  "vecScore": 0.463,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p84",
+  "category": "無關健康",
+  "question": "幫我寫一首情詩",
+  "expected": "refuse",
+  "vecScore": 0.458,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p85",
+  "category": "無關健康",
+  "question": "股票現在可以買嗎？",
+  "expected": "refuse",
+  "vecScore": 0.477,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p86",
+  "category": "無關健康",
+  "question": "台積電的股價多少？",
+  "expected": "refuse",
+  "vecScore": 0.494,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p87",
+  "category": "無關健康",
+  "question": "怎麼煮紅燒肉？",
+  "expected": "refuse",
+  "vecScore": 0.45,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p88",
+  "category": "無關健康",
+  "question": "明天的油價會漲嗎？",
+  "expected": "refuse",
+  "vecScore": 0.463,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p89",
+  "category": "無關健康",
+  "question": "高鐵票怎麼訂？",
+  "expected": "refuse",
+  "vecScore": 0.453,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p90",
+  "category": "無關健康",
+  "question": "iPhone 要不要換新？",
+  "expected": "refuse",
+  "vecScore": 0.53,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜與問題無關的段落",
+   "（示意）NIH ODS｜Introduction｜與問題無關的段落",
+   "（示意）NCCIH｜Key References｜與問題無關的段落"
+  ]
+ },
+ {
+  "id": "p91",
+  "category": "打招呼/亂打",
+  "question": "你好",
+  "expected": "refuse",
+  "vecScore": 0.425,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p92",
+  "category": "打招呼/亂打",
+  "question": "謝謝你",
+  "expected": "refuse",
+  "vecScore": 0.436,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p93",
+  "category": "打招呼/亂打",
+  "question": "哈囉～在嗎",
+  "expected": "refuse",
+  "vecScore": 0.485,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p94",
+  "category": "打招呼/亂打",
+  "question": "asdfghjkl",
+  "expected": "refuse",
+  "vecScore": 0.447,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p95",
+  "category": "打招呼/亂打",
+  "question": "？？？",
+  "expected": "refuse",
+  "vecScore": 0.409,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p96",
+  "category": "打招呼/亂打",
+  "question": "早安",
+  "expected": "refuse",
+  "vecScore": 0.434,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ },
+ {
+  "id": "p97",
+  "category": "打招呼/亂打",
+  "question": "123456",
+  "expected": "refuse",
+  "vecScore": 0.483,
+  "tags": [
+   "應拒答",
+   "示意資料"
+  ],
+  "source": "demo",
+  "top3": [
+   "（示意）DRIs｜前言｜無相關內容",
+   "（示意）DRIs｜其他原文註記｜無相關內容",
+   "（示意）NIH ODS｜Introduction｜無相關內容"
+  ]
+ }
+];
+
+
+(() => {
+  const CATS = [
+    { key: '健康問題', sub: '應回答' },
+    { key: '個人/即時', sub: '應拒答' },
+    { key: '無關健康', sub: '應拒答' },
+    { key: '打招呼/亂打', sub: '應拒答' },
+  ];
+  const METRICS = {
+    vec:    { label: '向量相似度',   field: 'vecScore',    domain: [0.4, 0.8], defaultThr: 0.600, step: 0.001, band: 0.03,  fmt: v => v.toFixed(3) },
+  };
+  const W = 860, H = 470, M = { l: 132, r: 28, t: 40, b: 44 };
+  const IW = W - M.l - M.r, IH = H - M.t - M.b, ROW = IH / CATS.length;
+  const R = 5.5, HIT = R + 4;          // 視覺半徑 5.5px，感應半徑大 4px
+  const NS = 'http://www.w3.org/2000/svg';
+  const COLOR_ON = getComputedStyle(document.documentElement).getPropertyValue('--brick').trim();
+  const COLOR_OFF = getComputedStyle(document.documentElement).getPropertyValue('--sand').trim();
+
+  const state = {
+    metric: 'vec',
+    thr: { vec: METRICS.vec.defaultThr },
+    hover: null, shown: null, locked: null,
+    gray: false, wrong: false, brushMode: false,
+    brushed: [], ptab: 'detail',
+  };
+
+  const byId = Object.fromEntries(DATA.map(d => [d.id, d]));
+  const svg = document.getElementById('chart');
+  const el = (tag, attrs = {}, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const xScale = (m, v) => {
+    const [a, b] = METRICS[m].domain;
+    return M.l + (Math.max(a, Math.min(b, v)) - a) / (b - a) * IW;
+  };
+  const xInvert = (m, px) => {
+    const [a, b] = METRICS[m].domain;
+    return a + (px - M.l) / IW * (b - a);
+  };
+  const score = (d, m = state.metric) => d[METRICS[m].field];
+  const answered = (d, m = state.metric) => score(d, m) >= state.thr[m];
+  const isWrong = (d, m = state.metric) => answered(d, m) !== (d.expected === 'answer');
+
+  /* ---------- 蜂群排列：每個指標各算一次位置 ---------- */
+  function beeswarm(m) {
+    const pos = {};
+    CATS.forEach((c, ci) => {
+      const cy = M.t + ROW * ci + ROW / 2, maxOff = ROW / 2 - R - 3;
+      const pts = DATA.filter(d => d.category === c.key)
+        .map(d => ({ id: d.id, x: xScale(m, score(d, m)) }))
+        .sort((a, b) => a.x - b.x);
+      const placed = [], gap = 2 * R + 1.2;
+      for (const p of pts) {
+        const near = placed.filter(q => Math.abs(q.x - p.x) < gap);
+        let best = 0;
+        for (let k = 0; k < 400; k++) {
+          const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 1.5;
+          if (near.every(q => Math.hypot(q.x - p.x, q.off - off) >= gap)) { best = off; break; }
+        }
+        best = Math.max(-maxOff, Math.min(maxOff, best));
+        placed.push({ x: p.x, off: best });
+        pos[p.id] = { x: p.x, y: cy + best };
+      }
+    });
+    return pos;
+  }
+  const POS = { vec: beeswarm('vec') };
+  const cur = {};
+  DATA.forEach(d => cur[d.id] = { ...POS.vec[d.id] });
+
+  /* ---------- 靜態圖層 ---------- */
+  const gRows = el('g', {}, svg), gAxis = el('g', { class: 'axis' }, svg);
+  const gBand = el('g', {}, svg), gThrBack = el('g', {}, svg);
+  const gDots = el('g', {}, svg), gRings = el('g', {}, svg);
+  const gThr = el('g', {}, svg), gBrush = el('g', {}, svg);
+
+  CATS.forEach((c, i) => {
+    const y = M.t + ROW * i;
+    el('rect', { class: 'row-bg', x: M.l, y: y + 4, width: IW, height: ROW - 8, rx: 10 }, gRows);
+    const t = el('text', { class: 'row-label', x: M.l - 14, y: y + ROW / 2 - 2, 'text-anchor': 'end' }, gRows);
+    t.textContent = c.key;
+    const n = DATA.filter(d => d.category === c.key).length;
+    const s = el('text', { class: 'row-sub', x: M.l - 14, y: y + ROW / 2 + 15, 'text-anchor': 'end' }, gRows);
+    s.textContent = `${c.sub}・${n} 題`;
+  });
+
+  function drawAxis() {
+    gAxis.innerHTML = '';
+    const m = state.metric, [a, b] = METRICS[m].domain;
+    const step = m === 'vec' ? 0.05 : 0.1;
+    el('line', { x1: M.l, x2: M.l + IW, y1: H - M.b + 2, y2: H - M.b + 2 }, gAxis);
+    for (let v = a; v <= b + 1e-9; v += step) {
+      const x = xScale(m, v);
+      el('line', { x1: x, x2: x, y1: H - M.b + 2, y2: H - M.b + 7 }, gAxis);
+      const t = el('text', { x, y: H - M.b + 21, 'text-anchor': 'middle' }, gAxis);
+      t.textContent = v.toFixed(2);
+    }
+    const title = el('text', { x: M.l + IW, y: H - 6, 'text-anchor': 'end' }, gAxis);
+    title.textContent = `${METRICS[m].label} →`;
+  }
+
+  /* ---------- 點 ---------- */
+  const nodes = {};
+  DATA.forEach(d => {
+    const g = el('g', { 'data-id': d.id }, gDots);
+    const dot = el('circle', { class: 'dot', r: R, 'fill-opacity': 0.78, stroke: '#fff', 'stroke-width': 0.8 }, g);
+    const hit = el('circle', { class: 'hit', r: HIT }, g);
+    hit.addEventListener('pointerenter', () => onHover(d.id));
+    hit.addEventListener('pointerleave', () => onLeave(d.id));
+    hit.addEventListener('click', e => { e.stopPropagation(); onClick(d.id); });
+    const ring = el('circle', { class: 'wrong-ring', r: R + 4, display: 'none' }, gRings);
+    nodes[d.id] = { g, dot, hit, ring };
+  });
+
+  /* ---------- 門檻線（可拖曳） ---------- */
+  const band = el('rect', { class: 'gray-band', y: M.t, height: IH, display: 'none' }, gBand);
+  const thrLine = el('line', { class: 'thr-line', y1: M.t - 8, y2: H - M.b + 2 }, gThr);
+  const thrHandle = el('rect', { class: 'thr-handle', y: M.t - 26, width: 12, height: 18, rx: 3 }, gThr);
+  const thrLabel = el('text', { class: 'thr-label', y: M.t - 12 }, gThr);
+  const leftLbl = el('text', { class: 'side-label', y: M.t - 12, 'text-anchor': 'end' }, gThr);
+  const rightLbl = el('text', { class: 'side-label', y: M.t - 12 }, gThr);
+  leftLbl.textContent = '← 拒答'; rightLbl.textContent = '會回答 →';
+  let dragging = false;
+  thrHandle.addEventListener('pointerdown', e => { dragging = true; thrHandle.setPointerCapture(e.pointerId); e.stopPropagation(); });
+  thrHandle.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const p = svgPoint(e);
+    setThr(xInvert(state.metric, p.x));
+  });
+  thrHandle.addEventListener('pointerup', () => dragging = false);
+
+  function svgPoint(e) {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  /* ---------- 框選 ---------- */
+  const brushOverlay = el('rect', { x: M.l, y: M.t, width: IW, height: IH, fill: 'transparent', display: 'none', style: 'cursor:crosshair' }, gBrush);
+  const brushRect = el('rect', { class: 'brush-rect', display: 'none' }, gBrush);
+  let bStart = null;
+  brushOverlay.addEventListener('pointerdown', e => {
+    bStart = svgPoint(e); brushOverlay.setPointerCapture(e.pointerId);
+    Object.assign(brushRect.style, {}); brushRect.setAttribute('display', '');
+    setRect(bStart, bStart);
+  });
+  brushOverlay.addEventListener('pointermove', e => { if (bStart) setRect(bStart, svgPoint(e)); });
+  brushOverlay.addEventListener('pointerup', e => {
+    if (!bStart) return;
+    const p = svgPoint(e);
+    const x0 = Math.min(bStart.x, p.x), x1 = Math.max(bStart.x, p.x);
+    const y0 = Math.min(bStart.y, p.y), y1 = Math.max(bStart.y, p.y);
+    bStart = null;
+    if (x1 - x0 < 3 && y1 - y0 < 3) { brushRect.setAttribute('display', 'none'); return; }
+    state.brushed = DATA.filter(d => { const c = cur[d.id]; return c.x >= x0 - R && c.x <= x1 + R && c.y >= y0 - R && c.y <= y1 + R; })
+      .sort((a, b) => score(b) - score(a)).map(d => d.id);
+    setPtab('brush');
+    render();
+  });
+  function setRect(a, b) {
+    brushRect.setAttribute('x', Math.min(a.x, b.x)); brushRect.setAttribute('y', Math.min(a.y, b.y));
+    brushRect.setAttribute('width', Math.abs(a.x - b.x)); brushRect.setAttribute('height', Math.abs(a.y - b.y));
+  }
+
+  /* ---------- 互動 ---------- */
+  function onHover(id) {
+    state.hover = id;
+    if (!state.locked) state.shown = id;
+    render();
+  }
+  function onLeave(id) {
+    if (state.hover === id) state.hover = null;   // 面板保留最後一次 hover 的點
+    render();
+  }
+  function onClick(id) {
+    if (state.locked === id) { state.locked = null; }
+    else { state.locked = id; state.shown = id; }
+    if (state.ptab !== 'detail') setPtab('detail');
+    render();
+  }
+  function setThr(v) {
+    const m = METRICS[state.metric];
+    const [a, b] = m.domain;
+    v = Math.round(Math.max(a, Math.min(b, v)) / m.step) * m.step;
+    state.thr[state.metric] = +v.toFixed(3);
+    render();
+  }
+
+  const slider = document.getElementById('thr');
+  slider.addEventListener('input', () => setThr(+slider.value));
+
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => switchMetric(b.dataset.metric)));
+  document.querySelectorAll('.panel-tabs button').forEach(b => b.addEventListener('click', () => { setPtab(b.dataset.ptab); render(); }));
+  const toggle = (id, key, after) => document.getElementById(id).addEventListener('click', () => { state[key] = !state[key]; after && after(); render(); });
+  toggle('btnGray', 'gray');
+  toggle('btnWrong', 'wrong');
+  toggle('btnBrush', 'brushMode', () => { state.hover = null; if (!state.brushMode) brushRect.setAttribute('display', state.brushed.length ? '' : 'none'); });
+  document.getElementById('btnClear').addEventListener('click', clearSelection);
+  document.getElementById('btnReset').addEventListener('click', () => { state.thr[state.metric] = METRICS[state.metric].defaultThr; render(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') clearSelection(); });
+
+  function clearSelection() {
+    state.locked = null; state.brushed = []; state.gray = false;
+    brushRect.setAttribute('display', 'none');
+    render();
+  }
+  function setPtab(t) {
+    state.ptab = t;
+    document.querySelectorAll('.panel-tabs button').forEach(b => b.classList.toggle('active', b.dataset.ptab === t));
+  }
+
+  let anim = null;
+  function switchMetric(m) {
+    if (m === state.metric) return;
+    state.metric = m;
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.metric === m));
+    brushRect.setAttribute('display', 'none'); state.brushed = [];
+    const from = {}; DATA.forEach(d => from[d.id] = { ...cur[d.id] });
+    const t0 = performance.now(), dur = 700;
+    cancelAnimationFrame(anim);
+    drawAxis(); render();
+    const step = now => {
+      const t = Math.min(1, (now - t0) / dur), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      DATA.forEach(d => {
+        const a = from[d.id], b = POS[m][d.id];
+        cur[d.id].x = a.x + (b.x - a.x) * e; cur[d.id].y = a.y + (b.y - a.y) * e;
+      });
+      placeDots();
+      if (t < 1) anim = requestAnimationFrame(step);
+    };
+    anim = requestAnimationFrame(step);
+  }
+
+  function placeDots() {
+    DATA.forEach(d => {
+      const { x, y } = cur[d.id], n = nodes[d.id];
+      for (const c of [n.dot, n.hit, n.ring]) { c.setAttribute('cx', x); c.setAttribute('cy', y); }
+    });
+  }
+
+  /* ---------- 主要繪製 ---------- */
+  function render(skipPanel) {
+    const m = state.metric, cfg = METRICS[m], thr = state.thr[m];
+    const tx = xScale(m, thr);
+
+    // 滑桿
+    slider.min = cfg.domain[0]; slider.max = cfg.domain[1]; slider.step = cfg.step; slider.value = thr;
+    document.getElementById('thrValue').textContent = cfg.fmt(thr);
+
+    // 門檻線
+    thrLine.setAttribute('x1', tx); thrLine.setAttribute('x2', tx);
+    thrHandle.setAttribute('x', tx - 6);
+    thrLabel.setAttribute('x', tx + 10); thrLabel.textContent = `門檻 ${cfg.fmt(thr)}`;
+    leftLbl.setAttribute('x', tx - 10);
+    rightLbl.setAttribute('x', tx + 92);
+    leftLbl.setAttribute('display', tx - M.l > 60 ? '' : 'none');
+    rightLbl.setAttribute('display', M.l + IW - tx > 140 ? '' : 'none');
+
+    // 灰色地帶
+    const lo = thr - cfg.band, hi = thr + cfg.band;
+    band.setAttribute('display', state.gray ? '' : 'none');
+    band.setAttribute('x', xScale(m, lo)); band.setAttribute('width', xScale(m, hi) - xScale(m, lo));
+
+    // 統計
+    const ans = DATA.filter(d => d.expected === 'answer'), ref = DATA.filter(d => d.expected === 'refuse');
+    const a = ans.filter(d => answered(d)).length, r = ref.filter(d => !answered(d)).length;
+    const w = DATA.filter(d => isWrong(d)).length;
+    setStat('statA', a, ans.length, '可回答有回答');
+    setStat('statR', r, ref.length, '應拒答有拒答');
+    const sw = document.getElementById('statW');
+    sw.innerHTML = `<b>${w}</b>題判斷錯`; sw.className = 'stat ' + (w ? 'bad' : 'good');
+
+    // 點的樣式
+    const brushedSet = new Set(state.brushed);
+    DATA.forEach(d => {
+      const n = nodes[d.id], s = score(d);
+      const active = d.id === state.hover || d.id === state.locked || d.id === state.shown && !state.hover;
+      const inGray = s >= lo && s <= hi;
+      const dim = (state.gray && !inGray) || (state.brushed.length && !brushedSet.has(d.id));
+      n.dot.setAttribute('fill', answered(d) ? COLOR_ON : COLOR_OFF);
+      n.dot.setAttribute('r', active ? R + 3.5 : R);
+      n.dot.setAttribute('stroke', active || brushedSet.has(d.id) ? (answered(d) ? '#D6E88A' : '#13212E') : '#fff');
+      n.dot.setAttribute('stroke-width', d.id === state.locked ? 2.6 : active ? 2 : brushedSet.has(d.id) ? 1.2 : 0.8);
+      n.dot.style.opacity = dim ? 0.13 : 1;
+      n.hit.style.pointerEvents = state.brushMode ? 'none' : 'all';
+      n.ring.setAttribute('display', state.wrong && isWrong(d) && !dim ? '' : 'none');
+      if (active && n.g !== gDots.lastChild) gDots.appendChild(n.g);   // 移到最上層
+    });
+    placeDots();
+
+    // 按鈕狀態
+    document.getElementById('btnGray').classList.toggle('on', state.gray);
+    document.getElementById('btnWrong').classList.toggle('on', state.wrong);
+    document.getElementById('btnBrush').classList.toggle('on', state.brushMode);
+    brushOverlay.setAttribute('display', state.brushMode ? '' : 'none');
+    document.getElementById('brushCount').textContent = state.brushed.length ? `(${state.brushed.length})` : '';
+
+    if (!skipPanel) renderPanel();
+  }
+
+  function setStat(id, n, total, label) {
+    const e = document.getElementById(id);
+    e.innerHTML = `<b>${n}/${total}</b>${label}`;
+    e.className = 'stat ' + (n === total ? 'good' : 'bad');
+  }
+
+  /* ---------- 右側面板 ---------- */
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const panel = document.getElementById('panelBody');
+
+  function renderPanel() {
+    if (state.ptab === 'brush') return renderBrushList();
+    const id = state.locked || state.shown;
+    if (!id) {
+      panel.innerHTML = `<p class="empty">把滑鼠移到任一個點，這裡會顯示該題的題目、向量相似度與門檻的比較，以及檢索到的前 3 段原文。<br><br>點一下可以<b>鎖定</b>；再點一次或按「清除選取」（Esc）解除。</p>`;
+      return;
+    }
+    panel.innerHTML = detailHTML(byId[id]);
+  }
+
+  function scoreBlock(d, m) {
+    const cfg = METRICS[m], s = score(d, m), thr = state.thr[m];
+    const pct = v => ((Math.max(cfg.domain[0], Math.min(cfg.domain[1], v)) - cfg.domain[0]) / (cfg.domain[1] - cfg.domain[0]) * 100).toFixed(1);
+    const ans = s >= thr, ok = ans === (d.expected === 'answer');
+    const diff = s - thr;
+    return `<div class="score ${m === state.metric ? 'current' : ''}">
+      <div class="top"><span>${cfg.label}${m === state.metric ? '（目前檢視）' : ''}</span><span class="val">${cfg.fmt(s)}</span></div>
+      <div class="bar"><div class="fill" style="width:${pct(s)}%;background:${ans ? COLOR_ON : COLOR_OFF}"></div><div class="mark" style="left:${pct(thr)}%"></div></div>
+      <div class="verdict" style="color:${ok ? 'var(--ok)' : 'var(--warn)'}">
+        門檻 ${cfg.fmt(thr)}，${diff >= 0 ? '高' : '低'} ${Math.abs(diff).toFixed(3)} → 系統${ans ? '會回答' : '拒答'}　${ok ? '✓ 判斷正確' : '✗ 判斷錯'}
+      </div></div>`;
+  }
+
+  function dynTags(d) {
+    const out = [];
+    for (const m of ['vec']) {
+      const name = '向量';
+      const ans = answered(d, m), wrong = isWrong(d, m);
+      out.push(`<span class="tag ${wrong ? 'dyn-bad' : 'dyn-ok'}">${name}門檻下被${ans ? '答' : '拒'}</span>`);
+    }
+    return out.join('');
+  }
+
+  function top3HTML(d) {
+    if (!d.top3 || !d.top3.length) return '<p class="empty">沒有檢索結果。</p>';
+    return `<ol class="top3">${d.top3.map((t, i) => {
+      if (typeof t === 'string') return `<li><div class="meta">第 ${i + 1} 名</div><div class="txt">${esc(t)}</div></li>`;
+      return `<li class="${t.expected ? 'exp' : ''}">
+        <div class="meta">第 ${i + 1} 名・${esc(t.source)}・相似度 ${(+t.score).toFixed(3)}${t.expected ? '・<b style="color:var(--ok)">預期段落</b>' : ''}</div>
+        <div class="meta">${esc(t.section)}</div>
+        <div class="txt">${esc(t.text)}…</div></li>`;
+    }).join('')}</ol>`;
+  }
+
+  function detailHTML(d) {
+    const srcPill = d.source === 'real' ? '<span class="pill real">真實檢索資料</span>' : '<span class="pill demo">示意資料</span>';
+    const lock = state.locked === d.id ? '<span class="pill lock">已鎖定</span>' : '';
+    return `<div class="pid"><span class="id">${esc(d.id)}</span><span class="pill">${esc(d.category)}</span>${srcPill}${lock}</div>
+      <div class="question">${esc(d.question)}</div>
+      <div class="tags">${(d.tags || []).map(t => `<span class="tag neutral">${esc(t)}</span>`).join('')}${dynTags(d)}</div>
+      ${d.caseId ? `<div class="list-head">題組代號：${esc(d.caseId)}</div>` : ''}
+      <h3>向量相似度 vs 門檻</h3>
+      ${scoreBlock(d, 'vec')}
+      <h3>檢索到的 Top 3</h3>
+      ${top3HTML(d)}`;
+  }
+
+  function renderBrushList() {
+    if (!state.brushed.length) {
+      panel.innerHTML = `<p class="empty">按下「框選模式」，在圖上拖曳出一個矩形，框到的題目會列在這裡。<br><br>滑鼠移到清單項目可以看詳細資料，點一下可以鎖定。</p>`;
+      return;
+    }
+    const m = state.metric;
+    panel.innerHTML = `<div class="list-head">框到 ${state.brushed.length} 題，依${METRICS[m].label}由高到低排列</div>` +
+      state.brushed.map(id => {
+        const d = byId[id];
+        return `<div class="brush-item ${id === state.locked ? 'active' : ''}" data-id="${id}">
+          <span class="bid">${id}</span>
+          <span class="bq"><span class="sw" style="background:${answered(d) ? COLOR_ON : COLOR_OFF}"></span>${esc(d.question)}</span>
+          <span class="bs">${METRICS[m].fmt(score(d))}${isWrong(d) ? ' ✗' : ''}</span></div>`;
+      }).join('');
+    panel.querySelectorAll('.brush-item').forEach(it => {
+      const id = it.dataset.id;
+      it.addEventListener('mouseenter', () => { state.hover = id; if (!state.locked) state.shown = id; renderDotsOnly(); });
+      it.addEventListener('mouseleave', () => { state.hover = null; renderDotsOnly(); });
+      it.addEventListener('click', () => onClick(id));
+    });
+  }
+  // 清單 hover 時只重畫點，避免清單被重建而失去 hover
+  function renderDotsOnly() { render(true); }
+
+  /* ---------- 結論與註腳 ---------- */
+  (function writeHeadline() {
+    const ans = DATA.filter(d => d.expected === 'answer'), ref = DATA.filter(d => d.expected === 'refuse');
+    const minA = f => Math.min(...ans.map(d => d[f])), maxR = f => Math.max(...ref.map(d => d[f]));
+    const vOverlap = maxR('vecScore') - minA('vecScore');
+    const c = document.getElementById('conclusion');
+    c.innerHTML = vOverlap > 0
+      ? `只看向量相似度，最像健康問題的應拒答題（${maxR('vecScore').toFixed(3)}）比分數最低的可回答題（${minA('vecScore').toFixed(3)}）還高 <b>${vOverlap.toFixed(3)}</b>，兩類分數重疊，門檻放哪都會誤判 → <b>所以不設相似度門檻，改用固定名額</b>：每次取前 4 段交給 LLM。`
+      : `向量相似度下兩類之間相差 <b>${(-vOverlap).toFixed(3)}</b>。`;
+    const real = DATA.filter(d => d.source === 'real').length;
+    document.getElementById('footnote').innerHTML = real
+      ? `資料說明：「健康問題」中有 ${real} 題取自 rag-檢索明細.md（cases.json 與 cases_neutral.json），向量分數為系統結果第 1 名的相似度，Top 3 為實際檢索結果；其餘 ${DATA.length - real} 題為<b>示意資料</b>，用來呈現分數重疊的情形。`
+      : `資料說明：目前全部為示意資料。`;
+  })();
+
+  drawAxis();
+  render();
+})();
+</script>
+</body>
+</html>
